@@ -1,12 +1,10 @@
 package main
 
 import (
-	"bufio"
 	"errors"
 	"fmt"
+	"io"
 	"net"
-	"strconv"
-	"strings"
 	"time"
 )
 
@@ -20,7 +18,7 @@ type cigwConn struct {
 
 func (conn *cigwConn) initConn() error {
 	var err error
-	conn.conn, err = conn.connDialer.Dial("tcp", "localhost:8081")
+	conn.conn, err = conn.connDialer.Dial("tcp", "localhost:45001")
 	if err != nil {
 		return err
 	}
@@ -38,12 +36,12 @@ func (conn *cigwConn) addRetryConnection() {
 				conn.destroy()
 				return
 			}
-			conn.conn, err = conn.connDialer.Dial("tcp", "localhost:8081")
+			conn.conn, err = conn.connDialer.Dial("tcp", "localhost:45001")
 			if err == nil {
 				conn.isReady = true
 			} else {
 				conn.isReady = false
-				// fmt.Println("will retry in 5 seconds")
+				fmt.Println("will retry in 5 seconds")
 				time.Sleep(5 * time.Second)
 			}
 		}
@@ -54,17 +52,16 @@ func (conn *cigwConn) addAfterRetryInit() {
 	go func() {
 		var err error
 		for {
-			conn.conn, err = conn.connDialer.Dial("tcp", "localhost:8081")
+			conn.conn, err = conn.connDialer.Dial("tcp", "localhost:45001")
 			if err == nil {
 				conn.isReady = true
 				conn.addRetryConnection()
 				return
 			}
 			if conn.markAsDestroy {
-				conn.conn.Close()
+				conn.destroy()
 				return
 			}
-			// fmt.Println("will retry in 5 seconds")
 			time.Sleep(5 * time.Second)
 		}
 	}()
@@ -124,9 +121,11 @@ func (pool *CigwPool) SendMessage(message string) <-chan string {
 			return
 		}
 
-		_, writeErr := conn.conn.Write([]byte(message + " \n"))
-		conn.conn.SetReadDeadline(time.Now().Add(15 * time.Second))
-		response, readErr := bufio.NewReader(conn.conn).ReadString('\n')
+		_, writeErr := conn.conn.Write([]byte(message))
+		conn.conn.SetReadDeadline(time.Now().Add(25 * time.Second))
+		var buff = make([]byte, 1263)
+
+		_, readErr := io.ReadFull(conn.conn, buff)
 
 		if timeoutErr, ok := readErr.(net.Error); ok && timeoutErr.Timeout() {
 			conn.markAsDestroy = true
@@ -144,7 +143,7 @@ func (pool *CigwPool) SendMessage(message string) <-chan string {
 			pool.release(conn)
 			close(result)
 		} else {
-			result <- response
+			result <- string(buff)
 			pool.release(conn)
 			close(result)
 		}
@@ -191,14 +190,27 @@ func main() {
 	pool.InitPool(20)
 	var aitr int = 0
 	for {
-		go func() {
-			laitr := aitr
-			aitr = aitr + 1
-			aa1 := <-pool.SendMessage("Ping a " + strconv.Itoa(laitr))
-			if ("Pong a " + strconv.Itoa(laitr)) != strings.Trim(strings.Replace(aa1, "\n", "", 1), " ") {
-				fmt.Println("Ping a " + strconv.Itoa(laitr) + " & " + aa1)
+		aitr = aitr + 1
+		go func(temp int) {
+			account := fmt.Sprintf("%017d", temp)
+			rrn := fmt.Sprintf("%012d", temp)
+			msg := "HHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH0005200005    1         0100FFCA1802E2007FE6160004000011277438   3911000000000001000000000000000000000000181017  1017092909000000000000000000047640000000000000000P2P VIA IB     00000000000000000000000000FFFFFFFFFFFFFFFF1400112774380001     101234567890         0A000000000000000000000000000000000000000000000000KBNKPROMPT PAY VIA IB        PROMPT PAY VIA IB        I293632B004B09230923000192920 80+00004KBNK000000000000000000001017000000000000000000000000370004000011277438=1299=330001234=10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000004011810171127743809290910090210201001                                     20181017                                                         -                                                 04040201BBLA0000000000001017" + rrn + "D0000000000000000000000000000001108ACCTID      1234567890                                                                                                                      " + account + "                                                                                                                                1000000000                                                        "
+			aa1 := <-pool.SendMessage(msg)
+			if len(aa1) < 1263 || account != aa1[1052:1069] {
+				fmt.Println(account + " " + aa1)
 			}
-		}()
-		time.Sleep(100 * time.Millisecond)
+		}(aitr)
+		// time.Sleep(3 * time.Millisecond)
+		// aitr = aitr + 1
+		// go func(temp int) {
+		// 	account := fmt.Sprintf("%017d", temp)
+		// 	rrn := fmt.Sprintf("%012d", temp)
+		// 	msg := "HHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH0005200005    1         0100FFCA1802E2007FE6160004000011277438   3911000000000001000000000000000000000000181017  1017092909000000000000000000047640000000000000000P2P VIA IB     00000000000000000000000000FFFFFFFFFFFFFFFF1400112774380001     101234567890         0A000000000000000000000000000000000000000000000000KBNKPROMPT PAY VIA IB        PROMPT PAY VIA IB        I293632B004B09230923000192920 80+00004KBNK000000000000000000001017000000000000000000000000370004000011277438=1299=330001234=10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000004011810171127743809290910090210201001                                     20181017                                                         -                                                 04040201BBLA0000000000001017" + rrn + "D0000000000000000000000000000001108ACCTID      1234567890                                                                                                                      " + account + "                                                                                                                                1000000000                                                        "
+		// 	aa1 := <-pool.SendMessage(msg)
+		// 	if len(aa1) < 1263 || account != aa1[1052:1069] {
+		// 		fmt.Println(account + " " + aa1)
+		// 	}
+		// }(aitr)
+		time.Sleep(10 * time.Millisecond)
 	}
 }
